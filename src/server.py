@@ -51,6 +51,7 @@ from dehydrator import Dehydrator
 from decay_engine import DecayEngine
 from embedding_engine import EmbeddingEngine
 from import_memory import ImportEngine
+from migrate_engine import MigrateEngine
 from utils import load_config, setup_logging, strip_wikilinks, count_tokens_approx, get_version, extract_wikilinks
 
 # --- iter 2.1：MCP 工具实现已按代码路径拆分到 tools/ 子包 ---
@@ -82,7 +83,7 @@ __version__ = get_version()
 logger.info(f"Ombre Brain v{__version__}")
 
 # --- iter 1.7 §A: legacy path migration check / 老路径迁移检测 ---
-# 场景：1.6 老用户习惯在项目根跑 `python server.py`；1.7 重组后需要
+# 场景：1.6 早期使用者习惯在项目根跑 `python server.py`；1.7 重组后需要
 # `python src/server.py`。这里只做「检测 + 提醒」，不做任何破坏性动作。
 # load_config() 里 buckets_dir 默认仍是 <repo_root>/buckets，所以老数据不会丢。
 #
@@ -94,7 +95,7 @@ try:
     _bd = config.get("buckets_dir", "")
     if _bd and os.path.isdir(_bd):
         _has_data = False
-        # 遍历各个桃子目录，任何一个里有 .md 文件就认定老用户位置有数据
+        # 遍历各个桃子目录，任何一个里有 .md 文件就认定早期部署位置有数据
         for sub in ("permanent", "dynamic", "feel", "plans", "letters"):
             p = os.path.join(_bd, sub)
             if os.path.isdir(p) and any(
@@ -215,6 +216,7 @@ bucket_mgr = BucketManager(config, embedding_engine=embedding_engine)  # Bucket 
 dehydrator = Dehydrator(config)                      # Dehydrator / 脱水器
 decay_engine = DecayEngine(config, bucket_mgr)       # Decay engine / 衰减引擎
 import_engine = ImportEngine(config, bucket_mgr, dehydrator, embedding_engine)  # Import engine / 导入引擎
+migrate_engine = MigrateEngine(config, bucket_mgr, embedding_engine)              # Migrate engine / 记忆包迁移引擎
 
 # 2.0.3: 启动后台任务检查本地 embedding 模型，缺失则从 HuggingFace 下载。
 # 下载期间 embedding_engine.enabled 会被暂时置为 False，让搜索退到关键词模式；
@@ -227,11 +229,26 @@ ensure_local_model_async(embedding_engine, config.get("buckets_dir", "buckets"))
 # --- Create MCP server instance / 创建 MCP 服务器实例 ---
 # host="0.0.0.0" so Docker container's SSE is externally reachable
 # stdio mode ignores host (no network)
+#
+# iter 2.1：拆成两个 FastMCP 实例 —— 因 claude.ai MCP 连接器存在 5 工具上限。
+#   主 mcp（/mcp）：高频  breath / hold / grow / dream / trace
+#   副 mcp_extra（/mcp-extra）：低频 anchor / release / pulse / plan / letter_write / letter_read
+# 两个实例共享同一进程、同一 runtime、同一 bucket_mgr；HTTP custom_route（dashboard、API）
+# 全部仍挂在 mcp 主实例上，副实例只承载 6 个 @mcp_extra.tool() 注册。
+# 启动段把两个 streamable_http_app() 的 routes 与 lifespan 合并到一个 starlette app，
+# 由同一 uvicorn 进程对外暴露。
 mcp = FastMCP(
     "Ombre Brain",
     host="0.0.0.0",
     port=OMBRE_PORT,
 )
+mcp_extra = FastMCP(
+    "Ombre Brain Extra",
+    host="0.0.0.0",
+    port=OMBRE_PORT,
+)
+# 让 streamable_http_app() 内置路由直接落在 /mcp-extra（默认是 /mcp）
+mcp_extra.settings.streamable_http_path = "/mcp-extra"
 
 
 # =============================================================
@@ -595,7 +612,7 @@ def _mark_op(name: str = "") -> None:
 
 # =============================================================
 # 仪表板硬删除通知队列（Dashboard Hard Purge Notification）
-# 用户从仪表板彻底删除记忆后，下次 Claude 调用任何工具时一次性通知。
+# 她/他从仪表板彻底删除记忆后，下次 Claude 调用任何工具时一次性通知。
 # 通知文件存于 buckets_dir/_pending_deletions.json，消费后立即删除。
 # Claude 无法触发此通知（它不是 MCP 工具，只能由仪表板 HTTP 端点写入）。
 # =============================================================
@@ -1287,7 +1304,7 @@ async def hold(
 
 @mcp.tool()
 async def grow(content: str) -> str:
-    """我把一段长内容（一天的事/一段日记/一篇用户给我的总结）整理进记忆,系统会拆成 2~6 条独立的事件桶并各自尝试合并。短内容(<30字)走 hold 单条快速路径,不强行拆。"""
+    """我把一段长内容（一天的事/一段日记/一篇她他给我的总结）整理进记忆,系统会拆成 2~6 条独立的事件桶并各自尝试合并。短内容(<30字)走 hold 单条快速路径,不强行拆。"""
     return await _with_notice(
         _t_grow.dispatch(content),
         op="grow",
@@ -1335,7 +1352,7 @@ async def trace(
     )
 
 
-@mcp.tool()
+@mcp_extra.tool()
 async def anchor(bucket_id: str) -> str:
     """我把这条桶设为 anchor（坐标系）。anchor 不会主动浮现在默认 breath，但 query/domain/emotion 命中时仍会返回。硬上限 24，已满时拒绝并提示先 release。"""
     return await _with_notice(
@@ -1345,7 +1362,7 @@ async def anchor(bucket_id: str) -> str:
     )
 
 
-@mcp.tool()
+@mcp_extra.tool()
 async def release(bucket_id: str) -> str:
     """我把这条桶从 anchor 状态释放。它变回普通桶，会重新参与默认 breath；pinned 状态保留。"""
     return await _with_notice(
@@ -1355,7 +1372,7 @@ async def release(bucket_id: str) -> str:
     )
 
 
-@mcp.tool()
+@mcp_extra.tool()
 async def pulse(include_archive: Optional[bool] = False) -> str:
     """我看一眼自己的记忆系统：固化/动态/衰减/归档桶数量、总占用、衰减引擎是否在跑,以及所有桶的摘要列表。include_archive=True 顺便看归档区。"""
     return await _with_notice(
@@ -1365,7 +1382,7 @@ async def pulse(include_archive: Optional[bool] = False) -> str:
     )
 
 
-@mcp.tool()
+@mcp_extra.tool()
 async def plan(
     content: str,
     status: Optional[str] = "active",
@@ -1388,7 +1405,7 @@ async def plan(
     )
 
 
-@mcp.tool()
+@mcp_extra.tool()
 async def letter_write(
     author: str,
     content: str,
@@ -1396,7 +1413,7 @@ async def letter_write(
     title: Optional[str] = "",
     date: Optional[str] = "",
 ) -> str:
-    """我写一封信(我写给用户,或把用户写给我的留下来)。author 必填:\"user\"=用户写给我的,\"claude\"=我写给用户的;user_name 可选;title/date 可选。信件原文永久保存,不压缩/不合并/不衰减,只走向量索引;普通 breath 不浮现,但 SessionStart 钩子会带上双方各最新一封。"""
+    """我写一封信(我写给她/他,或把她/他写给我的留下来)。author 必填:\"user\"=她/他写给我的,\"claude\"=我写给她/他的;user_name 可选;title/date 可选。信件原文永久保存,不压缩/不合并/不衰减,只走向量索引;普通 breath 不浮现,但 SessionStart 钩子会带上双方各最新一封。"""
     return await _with_notice(
         _t_plan.letter_write(
             author=author, content=content, user_name=user_name,
@@ -1410,7 +1427,7 @@ async def letter_write(
     )
 
 
-@mcp.tool()
+@mcp_extra.tool()
 async def letter_read(
     query: Optional[str] = "",
     limit: Optional[int] = 10,
@@ -2111,7 +2128,7 @@ async def api_duplicates(request: Request) -> Response:
 
     iter 1.6 §4：每次 hold/grow 写完后 _check_duplicate_for 在两边写 dup_candidate +
     dup_score。本接口把所有这种标记的桶聚合成 pair，前端「记忆健康」面板可据此让
-    用户挨个确认是否合并。返回去重后的 pair 列表。
+    她/他挨个确认是否合并。返回去重后的 pair 列表。
     """
     from starlette.responses import JSONResponse
     err = _require_auth(request)
@@ -2433,8 +2450,23 @@ async def api_plans_action(request: Request) -> Response:
                 await embedding_engine.generate_and_store(bucket_id, updates["content"])
             except Exception:
                 pass
+        # --- plan 看板把 plan 显式标 resolved → 联动 related_bucket / resolved_by ---
+        # rule.md §1：与 trace_core 同一逻辑（人工/Claude 显式路径）。
+        cascaded: list[str] = []
+        if updates.get("status") == "resolved":
+            from tools._common import cascade_plan_resolved_to_buckets
+            merged_meta = {**old_meta, **{k: v for k, v in updates.items() if k != "change_log"}}
+            try:
+                cascaded = await cascade_plan_resolved_to_buckets(merged_meta, bucket_id)
+            except Exception as e:
+                logger.warning(f"plans/action cascade outer error: {e}")
         # 返回体不包含 change_log（它很长，前端会重拉 /api/plans 刷新）
-        return JSONResponse({"ok": True, "id": bucket_id, "updates": {k: v for k, v in updates.items() if k != "change_log"}})
+        return JSONResponse({
+            "ok": True,
+            "id": bucket_id,
+            "updates": {k: v for k, v in updates.items() if k != "change_log"},
+            "cascaded_resolved": cascaded,
+        })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -2501,7 +2533,11 @@ async def api_breath_debug(request: Request) -> Response:
                     "normalized": round(normalized, 2),
                     "passed_threshold": normalized >= bucket_mgr.fuzzy_threshold,
                 })
-            except Exception:
+            except Exception as _score_exc:
+                logger.error(
+                    f"Scoring failed for bucket {bid!r}: {type(_score_exc).__name__}: {_score_exc}",
+                    exc_info=True,
+                )
                 continue
 
         results.sort(key=lambda x: x["normalized"], reverse=True)
@@ -3345,10 +3381,10 @@ async def api_bucket_edit(request: Request) -> Response:
 
 
 # =============================================================
-# /api/export  — iter 1.6 §2 一键打包导出
-# 流式返回 zip：所有 bucket markdown + embeddings.db + 当前 config 的脱敏版。
-# 不包含 .env / OMBRE_DASHBOARD_PASSWORD 等机密；config 中的 api_key 字段用
-# "***" 掩码。便于用户备份或迁移到新机器。
+# /api/export  — 完整记忆打包导出
+# 导出内容：所有 bucket markdown + embeddings.db + export_meta.json（含 embedding 模型信息）
+# 不导出 config（避免 api_key 等密钥泄露）
+# export_meta.json 中的 embedding 字段供导入端检查模型一致性。
 # =============================================================
 @mcp.custom_route("/api/export", methods=["GET"])
 async def api_export(request: Request) -> Response:
@@ -3359,7 +3395,6 @@ async def api_export(request: Request) -> Response:
 
     import io
     import zipfile
-    import copy
 
     buckets_dir = config.get("buckets_dir", "")
     if not buckets_dir or not os.path.isdir(buckets_dir):
@@ -3389,38 +3424,34 @@ async def api_export(request: Request) -> Response:
                 except Exception as e:
                     logger.warning(f"export: skip embeddings.db: {e}")
 
-            # 3) config 脱敏版
+            # 3) export_meta.json — 包含 embedding 模型信息，供导入端检查模型一致性
+            # 不包含 config（避免泄露 api_key 等密钥）
             try:
-                masked = copy.deepcopy(config)
-
-                def _mask(d: object) -> None:
-                    if isinstance(d, dict):
-                        for k in list(d.keys()):
-                            if any(s in k.lower() for s in ("api_key", "password", "token", "secret")):
-                                if d[k]:
-                                    d[k] = "***"
-                            else:
-                                _mask(d[k])
-                    elif isinstance(d, list):
-                        for it in d:
-                            _mask(it)
-                _mask(masked)
-                zf.writestr("config.snapshot.yaml", yaml.safe_dump(masked, allow_unicode=True))
-            except Exception as e:
-                logger.warning(f"export: config snapshot failed: {e}")
-
-            # 4) 元信息
-            try:
-                stats = await bucket_mgr.get_stats()
                 from datetime import datetime as _dt
-                meta = {
+                _emb_backend = getattr(embedding_engine, "_backend", None)
+                _emb_model = str(getattr(embedding_engine, "model", "") or "")
+                try:
+                    _emb_dim = int(_emb_backend.vector_dim()) if _emb_backend else 0
+                except Exception:
+                    _emb_dim = 0
+                _emb_be_name = str(getattr(embedding_engine, "backend", "") or "")
+                meta: dict = {
                     "exported_at": _dt.now().isoformat(timespec="seconds"),
                     "version": __version__,
-                    "stats": stats,
+                    "embedding": {
+                        "model": _emb_model,
+                        "dim": _emb_dim,
+                        "backend": _emb_be_name,
+                    },
                 }
+                # stats 失败时不影响 meta 写入（测试环境 mock 对象无法序列化）
+                try:
+                    meta["stats"] = await bucket_mgr.get_stats()
+                except Exception:
+                    pass
                 zf.writestr("export_meta.json", _json_lib.dumps(meta, ensure_ascii=False, indent=2))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"export: meta failed: {e}")
     except Exception as e:
         return JSONResponse({"error": f"export failed: {e}"}, status_code=500)
 
@@ -3430,6 +3461,108 @@ async def api_export(request: Request) -> Response:
         iter([buf.getvalue()]),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# =============================================================
+# /api/migrate/* — 完整记忆包（zip）导入
+# 流程：POST /upload → GET /status（含冲突列表） → POST /apply（带决策）→ 轮询 GET /status
+# =============================================================
+
+@mcp.custom_route("/api/migrate/upload", methods=["POST"])
+async def api_migrate_upload(request: Request) -> Response:
+    """上传 ombre_export_*.zip，解析内容并识别冲突，不实际写入。
+
+    Body: multipart/form-data，字段名 'file'；或直接 POST zip 字节（Content-Type: application/zip）。
+    成功返回解析状态（含冲突列表、embedding 模型匹配情况）。
+    """
+    from starlette.responses import JSONResponse
+    err = _require_auth(request)
+    if err:
+        return err
+
+    if migrate_engine.is_busy:
+        return JSONResponse({"error": "已有迁移任务正在进行，请等待完成后再上传"}, status_code=409)
+
+    content_type = request.headers.get("content-type", "")
+    try:
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            file_field = form.get("file")
+            if not file_field or isinstance(file_field, str):
+                return JSONResponse({"error": "缺少 file 字段"}, status_code=400)
+            zip_bytes = await file_field.read()
+        else:
+            zip_bytes = await request.body()
+
+        if not zip_bytes:
+            return JSONResponse({"error": "文件为空"}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": f"读取上传内容失败: {e}"}, status_code=400)
+
+    result = await migrate_engine.parse_zip(zip_bytes)
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=422)
+    return JSONResponse(result)
+
+
+@mcp.custom_route("/api/migrate/status", methods=["GET"])
+async def api_migrate_status(request: Request) -> Response:
+    """查询当前迁移任务状态（解析结果、冲突列表、执行进度、重新向量化进度）。"""
+    from starlette.responses import JSONResponse
+    err = _require_auth(request)
+    if err:
+        return err
+    return JSONResponse(migrate_engine.get_status())
+
+
+@mcp.custom_route("/api/migrate/apply", methods=["POST"])
+async def api_migrate_apply(request: Request) -> Response:
+    """执行导入，携带冲突决策。
+
+    Body (JSON):
+        decisions: {bucket_id: "skip" | "overwrite" | "keep_both"}
+
+    无冲突的 bucket 自动导入，无需出现在 decisions 中。
+    冲突但未在 decisions 中的 bucket 默认 skip（安全优先）。
+    成功启动后台任务返回 202；任务完成前轮询 GET /api/migrate/status。
+    """
+    from starlette.responses import JSONResponse
+    err = _require_auth(request)
+    if err:
+        return err
+
+    if migrate_engine.phase != "parsed":
+        return JSONResponse(
+            {"error": f"当前状态为 '{migrate_engine.phase}'，apply 需要先完成 upload 解析（phase=parsed）"},
+            status_code=409,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    decisions: dict[str, str] = {}
+    raw_decisions = body.get("decisions", {})
+    if isinstance(raw_decisions, dict):
+        valid_opts = {"skip", "overwrite", "keep_both"}
+        for bid, decision in raw_decisions.items():
+            if isinstance(bid, str) and isinstance(decision, str) and decision in valid_opts:
+                decisions[bid] = decision
+
+    # 后台执行（apply 可能耗时较长，含重新向量化）
+    async def _run_apply():
+        try:
+            await migrate_engine.apply(decisions)
+        except Exception as e:
+            logger.error(f"[migrate] background apply error: {e}", exc_info=True)
+
+    asyncio.create_task(_run_apply())
+
+    return JSONResponse(
+        {"ok": True, "message": "导入任务已启动，请轮询 GET /api/migrate/status 查看进度"},
+        status_code=202,
     )
 
 
@@ -3456,7 +3589,7 @@ async def api_version(request: Request) -> Response:
 # 这段文字由作者本人维护，前端只读展示，不开放编辑。
 # 把它写成模块级常量 dict，是因为：
 #   1) 内容固定不会变，没必要走文件 IO
-#   2) 不开放后台编辑接口，用户也不会被允许 PATCH 这段
+#   2) 不开放后台编辑接口，她/他也不会被允许 PATCH 这段
 #   3) 改文字 = 改源码 + 重新部署 = 这就是「这个界面只有我能改」的实现
 # =============================================================
 _AUTHOR_NOTE = {
@@ -3604,7 +3737,28 @@ if __name__ == "__main__":
         # --- Add CORS middleware so remote clients (Cloudflare Tunnel / ngrok) can connect ---
         # --- 添加 CORS 中间件，让远程客户端（Cloudflare Tunnel / ngrok）能正常连接 ---
         if transport == "streamable-http":
+            # iter 2.1：合并 mcp 主实例与 mcp_extra 副实例的 streamable_http_app。
+            # 两个实例各自的 streamable_http_app() 会返回独立的 starlette app，
+            # 内部分别只挂 /mcp 与 /mcp-extra 一条路由 + 各自的 SessionManager lifespan。
+            # 这里把副实例的 routes 与 lifespan 合并进主实例，让一个 uvicorn 进程
+            # 同时承载 /mcp、/mcp-extra 与所有 dashboard custom_route。
+            import contextlib as _ctxlib
             _app = mcp.streamable_http_app()
+            _extra_app = mcp_extra.streamable_http_app()
+            _main_lifespan = _app.router.lifespan_context
+            _extra_lifespan = _extra_app.router.lifespan_context
+
+            @_ctxlib.asynccontextmanager
+            async def _combined_lifespan(app):
+                async with _main_lifespan(app):
+                    async with _extra_lifespan(app):
+                        yield
+
+            _app.router.lifespan_context = _combined_lifespan
+            _app.routes.extend(_extra_app.routes)
+            logger.info(
+                "MCP split / MCP 拆分：主连接器 /mcp（5 高频工具）+ 副连接器 /mcp-extra（6 低频工具）"
+            )
         else:
             _app = mcp.sse_app()
         _app.add_middleware(
@@ -3617,4 +3771,16 @@ if __name__ == "__main__":
         logger.info("CORS middleware enabled for remote transport / 已启用 CORS 中间件")
         uvicorn.run(_app, host="0.0.0.0", port=OMBRE_PORT)
     else:
+        # stdio / sse：单连接器无 5 工具上限，把 mcp_extra 的工具回灌到 mcp
+        # 让所有 11 个工具仍在同一连接器里暴露（兼容旧 Claude Desktop 配置）。
+        # 依赖 FastMCP._tool_manager 私有结构；若未来版本变化，回退为只暴露主集 5 工具。
+        try:
+            mcp._tool_manager._tools.update(mcp_extra._tool_manager._tools)
+            logger.info(
+                f"stdio/sse 单连接器模式：已回灌 {len(mcp_extra._tool_manager._tools)} 个副集工具"
+            )
+        except AttributeError as e:
+            logger.warning(
+                f"FastMCP 内部结构变化，stdio 模式仅暴露主集 5 工具：{e}"
+            )
         mcp.run(transport=transport)

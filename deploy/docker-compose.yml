@@ -24,6 +24,7 @@ services:
       # These are container-fixed; cannot be overridden via .env.
       # 容器内固定值，不允许 .env 覆盖。
       - OMBRE_BUCKETS_DIR=/data             # Container-internal bucket path / 容器内路径
+      - OMBRE_EMBED_BACKEND=local           # Force local bge-m3 (baked into image) / 强制本地 embedding
     volumes:
       # Mount your Obsidian vault (or any host directory) for persistent storage.
       # Set OMBRE_HOST_VAULT_DIR in your .env (or in the Dashboard "Storage" panel)

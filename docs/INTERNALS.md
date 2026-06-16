@@ -376,7 +376,10 @@ feel 桶自身：
 | `/api/import/results` | GET | 🔒 | 已导入桶列表（含正文 300 字预览） |
 | `/api/import/review` | POST | 🔒 | 批量审阅（important / pin / noise / delete） |
 | `/api/bucket/{id}/edit` | PATCH/POST | 🔒 | iter 1.6 §6：Dashboard 编辑桶元数据（name/tags/domain/importance/resolved/pinned/digested/content）；走 §5 大小+pinned 配额 |
-| `/api/export` | GET | 🔒 | iter 1.6 §2：流式返回 zip（buckets/*.md + embeddings.db + 脱敏 config.snapshot.yaml + export_meta.json） |
+| `/api/export` | GET | 🔒 | iter 1.6 §2：流式返回 zip（buckets/*.md + embeddings.db + export_meta.json）；**不包含 config / 密钥**；export_meta.json 含 embedding 模型信息，供导入端检查一致性 |
+| `/api/migrate/upload` | POST | 🔒 | 上传 zip 包，解析内容、识别 ID 冲突、检查 embedding 模型一致性；返回冲突列表，不实际写入 |
+| `/api/migrate/status` | GET | 🔒 | 查询当前迁移任务状态（phase / 冲突列表 / 导入进度 / 重新向量化进度） |
+| `/api/migrate/apply` | POST | 🔒 | 执行导入，携带冲突决策 `{bucket_id: "skip"|"overwrite"|"keep_both"}`；异步执行，轮询 status 看进度 |
 | `/api/heartbeat` | GET | 🔒 | iter 1.6 §3：心跳（uptime / last_op_ts / decay 状态），Dashboard 右上角灯轮询 |
 | `/api/logs` | GET | 🔒 | iter 1.6 §3：读 `OMBRE_LOG_FILE`（RotatingFileHandler 写的 server.log）末尾若干行，支持 `?level=ERROR\|WARNING\|INFO\|ALL&limit=200` |
 | `/api/onboarding/status` | GET | 公开 | iter 1.6 §8：判断"全新启动"。env+config 同时缺 dashboard_password 与 gemini api_key 时 `first_run=true`。**不要求登录**——首次访问连密码都还没设。不返回任何密钥值，仅布尔/来源标识 |
@@ -393,7 +396,8 @@ feel 桶自身：
 | `/api/env-vars` | GET | 🔒 | dashboard 设置页「⑤ 环境变量」只读区：当前进程读到的所有 `OMBRE_*`，敏感字段脱敏 |
 | `/api/env-config` | GET | 🔒 | 可写 6 字段的当前值（脱敏） |
 | `/api/env-config` | POST | 🔒 | 热更新 6 字段并写回 `.env`（重启仍有效） |
-| `/mcp/*` | — | 公开 | FastMCP 协议端点 |
+| `/mcp/*` | — | 公开 | FastMCP 主连接器（iter 2.1）：breath / hold / grow / dream / trace |
+| `/mcp-extra/*` | — | 公开 | FastMCP 副连接器（iter 2.1）：anchor / release / pulse / plan / letter_write / letter_read |
 
 🔒 = 需要 cookie 认证，未认证返回 `JSON {error, setup_needed}` 状态码 401。
 
@@ -804,7 +808,7 @@ normalized = total / w_sum × 100   # 归一化到 0~100
 |---|---|---|
 | Dashboard 401 | `server.py` | `_require_auth`；检查 cookie `ombre_session`；`OMBRE_DASHBOARD_PASSWORD` 是否正确 |
 | 改密码报「环境变量密码」错误 | `server.py` | `auth_change_password` 检测 `OMBRE_DASHBOARD_PASSWORD` 设置时禁用 |
-| HTTP 模式下 Claude.ai 连不上 | `server.py` | `__main__` CORS 中间件；`_app = mcp.streamable_http_app()`；URL 末尾必须 `/mcp` |
+| HTTP 模式下 Claude.ai 连不上 | `server.py` | `__main__` CORS 中间件；`_app = mcp.streamable_http_app()` + `mcp_extra` 合并；URL 末尾必须 `/mcp`（主）或 `/mcp-extra`（副） |
 | docker compose 重启后桶丢失 | — | volume 必须挂载到 `OMBRE_BUCKETS_DIR`（默认 `/data` 或 `/app/buckets`） |
 | Dashboard 改 host vault 不生效 | `server.py` | `_write_env_var`；写入 `.env` 后必须 `docker compose down/up` 重新挂载 |
 | keepalive 失败 | `server.py` | `_keepalive_loop`；检查 `OMBRE_PORT` 实际监听端口 |

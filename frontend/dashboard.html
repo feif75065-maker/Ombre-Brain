@@ -389,7 +389,7 @@
     background: var(--accent);
     color: var(--bg);
     border: none;
-    border-radius: 2px;
+    border-radius: 4px;
     font-family: inherit;
     font-size: 13px;
     font-weight: 500;
@@ -404,7 +404,7 @@
     content: '';
     position: absolute;
     inset: 0;
-    border-radius: 2px;
+    border-radius: 4px;
     background: linear-gradient(145deg, rgba(255,255,255,0.08), transparent);
     pointer-events: none;
   }
@@ -421,7 +421,7 @@
     background: var(--surface-solid);
     color: var(--accent);
     border: none;
-    border-radius: 2px;
+    border-radius: 4px;
     font-family: inherit;
     font-size: 13px;
     font-weight: 500;
@@ -436,6 +436,26 @@
   .btn-secondary:active {
     transform: translateY(0);
     box-shadow: inset 3px 3px 6px var(--shadow-dark-subtle), inset -2px -2px 4px var(--shadow-light);
+  }
+  /* iter 2.1：危险操作三类之一。仅用于清理/删除/退出登录。 */
+  .btn-danger {
+    padding: 12px 28px;
+    background: var(--surface-solid);
+    color: var(--negative);
+    border: 1px solid var(--negative);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .btn-danger:hover {
+    background: var(--negative);
+    color: var(--bg);
+  }
+  .btn-danger:active {
+    transform: translateY(1px);
   }
 
   #network-canvas {
@@ -697,8 +717,8 @@
   </label>
   <span id="purge-count-label" style="font-size:12px;color:var(--accent);min-width:60px;">已选 0 条</span>
   <span style="font-size:11px;color:var(--text-dim);flex:1;">点击行选中；仅对当前显示的桶生效</span>
-  <button onclick="openPurgeConfirm()" id="purge-exec-btn" disabled
-    style="background:var(--accent);border:none;color:#fff;border-radius:2px;padding:5px 16px;font-size:12px;cursor:pointer;opacity:0.4;transition:opacity 0.2s;">
+  <button class="btn-danger" onclick="openPurgeConfirm()" id="purge-exec-btn" disabled
+    style="padding:5px 16px;font-size:12px;opacity:0.4;transition:opacity 0.2s;">
     彻底清除所选
   </button>
   <button onclick="exitPurgeMode()" style="background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:2px;padding:5px 12px;font-size:12px;cursor:pointer;">退出清理模式</button>
@@ -973,7 +993,7 @@
       <div style="margin-bottom:18px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:6px;">系统通知称呼</div>
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;line-height:1.6;">
-          系统向 Claude 发送通知时用的称呼（如「婷易」「主人」「人类」）。留空 = 默认「人类」。
+          系统向 Claude 发送通知时用的称呼（如你的名字或昵称）。留空 = 默认「人类」。
         </div>
         <div class="config-row">
           <label>称呼</label>
@@ -1001,7 +1021,7 @@
 
       <div>
         <div style="font-weight:600;font-size:13px;margin-bottom:6px;">退出登录</div>
-        <button onclick="doLogout()" style="color:var(--negative);border-color:var(--negative);">退出登录</button>
+        <button class="btn-danger" onclick="doLogout()" style="padding:6px 14px;font-size:12px;">退出登录</button>
       </div>
     </div>
 
@@ -1191,12 +1211,58 @@
       <div style="margin-bottom:18px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:6px;">数据导出 / 健康</div>
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;line-height:1.6;">
-          导出会打包当前所有 bucket markdown + embeddings.db + 脱敏 config，便于本地备份或迁移。<br>
+          导出打包当前所有 bucket markdown + embeddings.db（<strong>不包含 config / 密钥</strong>），可用于本地备份或跨设备迁移。<br>
           重复桶：每次 hold/grow 后系统会标记相似度 &gt; 0.95 的对，下面可逐对处理。
         </div>
         <button class="btn-primary" onclick="downloadExport()">⬇ 导出全部为 zip</button>
         <button onclick="loadDuplicates()" class="icon-btn" style="margin-left:8px;"><i data-lucide="copy"></i> 检查重复桶</button>
         <div id="duplicates-list" style="margin-top:14px;font-size:12px;"></div>
+      </div>
+
+      <!-- 记忆包导入（zip 迁移） -->
+      <div style="margin-bottom:18px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="font-weight:600;font-size:13px;margin-bottom:6px;">从 zip 包导入（完整记忆迁移）</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;line-height:1.6;">
+          上传从另一个 Ombre Brain 实例导出的 <code>.zip</code> 文件。系统会增量合并，遇到 ID 冲突时由你决定如何处理。<br>
+          若导入包的 embedding 模型与当前不一致，向量数据将被丢弃并在导入后自动重新向量化。
+        </div>
+        <div id="migrate-upload-zone"
+          style="border:2px dashed var(--border);border-radius:12px;padding:28px;text-align:center;cursor:pointer;margin-bottom:10px;transition:border-color .2s;"
+          onclick="document.getElementById('migrate-file-input').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+          ondragleave="this.style.borderColor='var(--border)'"
+          ondrop="event.preventDefault();this.style.borderColor='var(--border)';handleMigrateFileDrop(event)">
+          <div style="font-size:13px;color:var(--text-dim);">点击或拖入 <code>ombre_export_*.zip</code></div>
+          <input type="file" id="migrate-file-input" accept=".zip" style="display:none" onchange="handleMigrateFileSelect(event)" />
+        </div>
+
+        <!-- 解析结果 / 冲突面板 -->
+        <div id="migrate-parsed-panel" style="display:none;margin-bottom:10px;">
+          <div id="migrate-parse-info" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;line-height:1.7;"></div>
+
+          <div id="migrate-conflicts-section" style="display:none;">
+            <div style="font-weight:600;font-size:12px;margin-bottom:6px;">⚠ 以下 bucket 在当前系统中已存在，请为每个冲突选择处理方式：</div>
+            <div id="migrate-conflicts-list" style="max-height:280px;overflow-y:auto;font-size:12px;"></div>
+          </div>
+
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button class="btn-primary" id="migrate-apply-btn" onclick="applyMigrate()">⬆ 开始导入</button>
+            <button onclick="resetMigrate()" style="font-size:12px;padding:4px 12px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-dim);">取消</button>
+          </div>
+        </div>
+
+        <!-- 执行进度 -->
+        <div id="migrate-progress-panel" style="display:none;margin-top:10px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+            <span id="migrate-phase-text" style="color:var(--text-dim);">准备中…</span>
+            <span id="migrate-count-text"></span>
+          </div>
+          <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;margin-bottom:8px;">
+            <div id="migrate-progress-bar" style="height:100%;background:var(--accent);width:0%;transition:width .3s;border-radius:4px;"></div>
+          </div>
+          <div id="migrate-result-text" style="font-size:12px;color:var(--text-dim);"></div>
+          <div id="migrate-errors-text" style="font-size:11px;color:var(--negative);max-height:80px;overflow-y:auto;margin-top:4px;white-space:pre-line;"></div>
+        </div>
       </div>
 
       <div>
@@ -1206,8 +1272,7 @@
           <strong>仅用于清理批量导入时分析出错产生的垃圾记忆。</strong><br>
           Claude 无法触发此操作；删除后 Claude 下次任意工具调用时会收到一次性通知。
         </div>
-        <button onclick="enterPurgeMode()"
-          style="background:none;border:1px solid rgba(184,92,60,0.5);color:var(--accent);border-radius:2px;padding:6px 18px;font-size:12px;cursor:pointer;">
+        <button class="btn-danger" onclick="enterPurgeMode()" style="padding:6px 18px;font-size:12px;">
           进入清理模式（批量永久删除）
         </button>
       </div>
@@ -3171,6 +3236,187 @@ async function clearOBErrors() {
 function downloadExport() {
   // 直接走浏览器下载
   window.location.href = BASE + '/api/export';
+}
+
+// ========================================
+// 记忆包迁移（zip 导入）
+// ========================================
+
+// 冲突决策表：{bucket_id: "skip"|"overwrite"|"keep_both"}
+let _migrateDecisions = {};
+let _migratePollingTimer = null;
+
+function handleMigrateFileDrop(event) {
+  const files = event.dataTransfer.files;
+  if (files && files.length > 0) uploadMigrateZip(files[0]);
+}
+function handleMigrateFileSelect(event) {
+  const files = event.target.files;
+  if (files && files.length > 0) uploadMigrateZip(files[0]);
+}
+
+async function uploadMigrateZip(file) {
+  if (!file.name.endsWith('.zip')) {
+    alert('请选择 .zip 格式的导出文件');
+    return;
+  }
+  document.getElementById('migrate-upload-zone').innerHTML =
+    '<div style="font-size:12px;color:var(--text-dim);">解析中… ' + esc(file.name) + '</div>';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch(BASE + '/api/migrate/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!d.ok) {
+      alert('解析失败：' + (d.error || '未知错误'));
+      resetMigrate();
+      return;
+    }
+    renderMigrateParsed(d);
+  } catch (e) {
+    alert('上传失败：' + e.message);
+    resetMigrate();
+  }
+}
+
+function renderMigrateParsed(d) {
+  _migrateDecisions = {};
+  document.getElementById('migrate-upload-zone').style.display = 'none';
+  const panel = document.getElementById('migrate-parsed-panel');
+  panel.style.display = 'block';
+  document.getElementById('migrate-progress-panel').style.display = 'none';
+
+  const embMatch = d.embedding_match;
+  const importModel = d.import_model || '（未知）';
+  const currentModel = d.current_model || '（未知）';
+  const hasEmb = d.has_embeddings;
+
+  let infoHtml = `解析到 <strong>${d.total_buckets}</strong> 个 bucket。`;
+  if (hasEmb) {
+    if (embMatch) {
+      infoHtml += ` <span style="color:var(--positive)">✓ Embedding 模型一致（${esc(importModel)}），向量数据将一并导入。</span>`;
+    } else {
+      infoHtml += ` <span style="color:var(--negative)">⚠ Embedding 模型不一致：导入包 <code>${esc(importModel)}</code> vs 当前 <code>${esc(currentModel)}</code>。向量数据将被丢弃，导入后自动重新向量化。</span>`;
+    }
+  } else {
+    infoHtml += ' 导入包不含向量数据，导入后将自动重新向量化。';
+  }
+  document.getElementById('migrate-parse-info').innerHTML = infoHtml;
+
+  const conflicts = d.conflicts || [];
+  const conflictSec = document.getElementById('migrate-conflicts-section');
+  if (conflicts.length === 0) {
+    conflictSec.style.display = 'none';
+  } else {
+    conflictSec.style.display = 'block';
+    const list = document.getElementById('migrate-conflicts-list');
+    list.innerHTML = conflicts.map(c => {
+      const bid = esc(c.bucket_id);
+      return `<div style="background:var(--surface);border-radius:8px;padding:8px 10px;margin:4px 0;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${bid}">${esc(c.import_name)}</div>
+            <div style="color:var(--text-dim);font-size:11px;">导入: ${esc(c.import_created)} &nbsp;|&nbsp; 当前: <em>${esc(c.current_name)}</em> (${esc(c.current_created)})</div>
+          </div>
+          <select data-bucket-id="${c.bucket_id}"
+            onchange="_migrateDecisions[this.dataset.bucketId]=this.value"
+            style="font-size:12px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface-solid);color:var(--text);">
+            <option value="skip" selected>跳过（保留当前）</option>
+            <option value="overwrite">覆盖（用导入替换当前）</option>
+            <option value="keep_both">保留两者（分配新 ID）</option>
+          </select>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+async function applyMigrate() {
+  document.getElementById('migrate-parsed-panel').style.display = 'none';
+  document.getElementById('migrate-progress-panel').style.display = 'block';
+  document.getElementById('migrate-phase-text').textContent = '正在导入…';
+  document.getElementById('migrate-progress-bar').style.width = '0%';
+
+  try {
+    const r = await fetch(BASE + '/api/migrate/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decisions: _migrateDecisions }),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      document.getElementById('migrate-phase-text').textContent = '启动失败：' + (d.error || r.status);
+      return;
+    }
+  } catch (e) {
+    document.getElementById('migrate-phase-text').textContent = '请求失败：' + e.message;
+    return;
+  }
+
+  // 开始轮询状态
+  _migratePollingTimer = setInterval(pollMigrateStatus, 1200);
+}
+
+async function pollMigrateStatus() {
+  try {
+    const r = await fetch(BASE + '/api/migrate/status');
+    const d = await r.json();
+    updateMigrateProgress(d);
+    if (d.phase === 'done' || d.phase === 'error') {
+      clearInterval(_migratePollingTimer);
+      _migratePollingTimer = null;
+    }
+  } catch (e) {
+    // 网络抖动，继续轮询
+  }
+}
+
+function updateMigrateProgress(d) {
+  const phaseNames = {
+    idle: '空闲', parsed: '已解析', applying: '正在写入…',
+    reindexing: '重新向量化…', done: '完成', error: '出错',
+  };
+  const phaseText = document.getElementById('migrate-phase-text');
+  phaseText.textContent = phaseNames[d.phase] || d.phase;
+  phaseText.style.color = d.phase === 'error' ? 'var(--negative)' : 'var(--text-dim)';
+
+  let pct = 0;
+  let countText = '';
+  if (d.phase === 'applying' && d.apply_progress && d.apply_progress.total > 0) {
+    pct = Math.round(d.apply_progress.done / d.apply_progress.total * 100);
+    countText = `${d.apply_progress.done} / ${d.apply_progress.total}`;
+  } else if (d.phase === 'reindexing' && d.reindex_progress && d.reindex_progress.total > 0) {
+    pct = Math.round(d.reindex_progress.done / d.reindex_progress.total * 100);
+    countText = `向量化 ${d.reindex_progress.done} / ${d.reindex_progress.total}`;
+  } else if (d.phase === 'done') {
+    pct = 100;
+    const res = d.result || {};
+    countText = `已导入 ${res.imported || 0} 条，跳过 ${res.skipped || 0} 条`;
+  }
+  document.getElementById('migrate-progress-bar').style.width = pct + '%';
+  document.getElementById('migrate-count-text').textContent = countText;
+
+  if (d.phase === 'done') {
+    const res = d.result || {};
+    document.getElementById('migrate-result-text').textContent =
+      `导入完成：${res.imported || 0} 条写入，${res.skipped || 0} 条跳过。`;
+  } else if (d.phase === 'error') {
+    document.getElementById('migrate-result-text').textContent = '错误：' + (d.error || '');
+  }
+
+  const errs = (d.apply_errors || []);
+  document.getElementById('migrate-errors-text').textContent = errs.length ? errs.join('\n') : '';
+}
+
+function resetMigrate() {
+  if (_migratePollingTimer) { clearInterval(_migratePollingTimer); _migratePollingTimer = null; }
+  _migrateDecisions = {};
+  const zone = document.getElementById('migrate-upload-zone');
+  zone.style.display = 'block';
+  zone.innerHTML = '<div style="font-size:13px;color:var(--text-dim);">点击或拖入 <code>ombre_export_*.zip</code></div><input type="file" id="migrate-file-input" accept=".zip" style="display:none" onchange="handleMigrateFileSelect(event)" />';
+  document.getElementById('migrate-parsed-panel').style.display = 'none';
+  document.getElementById('migrate-progress-panel').style.display = 'none';
 }
 
 async function loadDuplicates() {

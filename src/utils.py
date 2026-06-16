@@ -101,7 +101,7 @@ def load_config(config_path: Optional[str] = None) -> dict:
     }
 
     # --- Load user config from YAML file ---
-    # --- 从 YAML 文件加载用户自定义配置 ---
+    # --- 从 YAML 文件加载她/他的自定义配置 ---
     if config_path is None:
         # Search order: $OMBRE_CONFIG_PATH → cwd/config.yaml → project_root/config.yaml
         # 查找顺序：环境变量 > 当前工作目录 > 项目根目录
@@ -260,7 +260,7 @@ def setup_logging(level: str = "INFO", log_dir: str | None = None) -> None:
     注意：MCP stdio 模式下 stdout 被协议占用，日志只能走 stderr。
 
     iter 1.6 §3：除 stderr 外，同时写一份 ``server.log``（RotatingFileHandler）。
-    Dashboard 的「日志」标签页通过 ``/api/logs`` 读取这个文件，方便用户在网页上
+    Dashboard 的「日志」标签页通过 ``/api/logs`` 读取这个文件，方便她/他在网页上
     直接看 ERROR/WARNING。日志路径优先级：
         log_dir 参数 > 环境变量 OMBRE_LOG_DIR > <buckets_dir>/.logs > /tmp/ombre_logs
     """

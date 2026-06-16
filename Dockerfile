@@ -2,9 +2,12 @@
 # Ombre Brain Docker Build (2.0.3)
 # Docker 构建文件
 #
-# Build:                       docker build -t ombre-brain .
-# Build (skip model preload):  docker build --build-arg PRELOAD_MODEL=false -t ombre-brain:slim .
-# Run:                         docker run -e OMBRE_DASHBOARD_PASSWORD=xxx -p 8000:8000 ombre-brain
+# Build (默认，含 bge-m3 模型 约3GB):
+#   docker build -t ombre-brain .
+# Build Slim (跳过模型预加载，首次启动自动下载 约600MB):
+#   docker build --build-arg PRELOAD_MODEL=false -t ombre-brain:slim .
+# 本地运行:
+#   docker run -e OMBRE_DASHBOARD_PASSWORD=xxx -p 8000:8000 ombre-brain
 # ============================================================
 
 FROM python:3.12-slim
@@ -51,6 +54,7 @@ VOLUME ["/app/buckets"]
 ENV OMBRE_TRANSPORT=streamable-http
 ENV OMBRE_BUCKETS_DIR=/app/buckets
 # 默认走本地 embedding（fastembed + bge-m3，无需 API key）
+# 通过 docker-compose environment 或运行时 -e 可覆盖为 api
 ENV OMBRE_EMBED_BACKEND=local
 
 EXPOSE 8000

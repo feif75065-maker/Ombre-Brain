@@ -13,7 +13,7 @@ migration_engine.py — embedding 迁移引擎（2.0.3 新增）
 - 进度文件 _pending_migration_status.json，前端 3s 轮询
 - 断点续传：_migration_checkpoint.json 记录已完成 id 集合
 - 限速：每批 10 条，间隔 0.5s（避免本地推理打爆 CPU 或 API 限流）
-- 失败时附最近 15 行 errors.jsonl，提示用户「这是本地环境相关问题」
+- 失败时附最近 15 行 errors.jsonl，提示她/他「这是本地环境相关问题」
 
 不做：
 - 不做 bucket 迁移、桶文件重写

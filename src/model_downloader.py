@@ -11,7 +11,7 @@ model_downloader.py — 本地 embedding 模型下载器
 - 下载在后台线程跑，不阻塞 server 启动；Dashboard 能马上访问
 - 进度写到 _model_download_status.json，前端轮询 GET /api/embedding/model/status
 - 单进程同一时刻只允许一个下载任务在跑（线程锁 + JSON 里 phase 字段做幂等）
-- 任何异常都写进 status，并记 OB-F004（Fatal 级，但不退出进程；用户可以从 Dashboard
+- 任何异常都写进 status，并记 OB-F004（Fatal 级，但不退出进程；她/他可以从 Dashboard
   切到 API 后端兜底）
 
 为什么委托 fastembed 自己下载（2.0.3 修正）：

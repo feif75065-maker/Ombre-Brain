@@ -327,7 +327,7 @@ class BucketManager:
         # 使用连字符替代冒号，避免 sanitize_name 后续编辑时把冒号去掉破坏可读性。
         _ts = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
         _clean = sanitize_name(name) if name else ""
-        bucket_name = f"{_ts} {_clean}" if (_clean and _clean != "unnamed") else _ts
+        bucket_name = (f"{_ts} {_clean}" if (_clean and _clean != "unnamed") else _ts)[:80]
         # feel buckets are allowed to have empty domain; others default to ["未分类"]
         if bucket_type == "feel":
             domain = domain if domain is not None else []
@@ -782,7 +782,11 @@ class BucketManager:
                     with open(file_path, "w", encoding="utf-8") as f:
                         f.write(frontmatter.dumps(post))
                     rippled += 1
-                except Exception:
+                except Exception as _ripple_exc:
+                    logger.warning(
+                        f"[ripple] Failed to update activation_count for {bucket['id']!r}: "
+                        f"{type(_ripple_exc).__name__}: {_ripple_exc}"
+                    )
                     continue
 
     # ---------------------------------------------------------

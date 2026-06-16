@@ -422,7 +422,7 @@ class EmbeddingEngine:
         """对账历史 model_name / vector_dim 与当前后端是否一致。
 
         - 主表为空：第一次写入，覆盖 meta，无害
-        - meta 与当前后端不一致：记 OB-W005 警告，提示用户跑迁移
+        - meta 与当前后端不一致：记 OB-W005 警告，提示她/他跑迁移
         """
         if not self._backend:
             return
@@ -562,7 +562,11 @@ class EmbeddingEngine:
                 stored_embedding = json.loads(emb_json)
                 sim = self._cosine_similarity(query_embedding, stored_embedding)
                 results.append((bucket_id, sim))
-            except (json.JSONDecodeError, ValueError, TypeError):
+            except (json.JSONDecodeError, ValueError, TypeError) as _emb_exc:
+                logger.warning(
+                    f"[embedding] Skipping malformed embedding for {bucket_id!r}: "
+                    f"{type(_emb_exc).__name__}: {_emb_exc}"
+                )
                 continue
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
